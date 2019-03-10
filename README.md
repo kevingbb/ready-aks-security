@@ -81,7 +81,7 @@ az network vnet subnet create \
     --resource-group $RG \
     --vnet-name $VNET_NAME \
     --name $SVCSUBNET_NAME \
-    --address-prefix 10.42.2.0/24    
+    --address-prefix 10.42.2.0/24
 az network vnet subnet create \
     --resource-group $RG \
     --vnet-name $VNET_NAME \
@@ -116,10 +116,10 @@ It starts with creating a Public IP address and then gets into creating the Azur
 az network public-ip create -g $RG -n $FWPUBLICIP_NAME -l $LOC --sku "Standard"
 # Create Azure Firewall
 az network firewall create -g $RG -n $FWNAME -l $LOC
-# Configure Azure Firewall IP Config - This command will take a few mins.
+# Configure Azure Firewall IP Config - This command will take several mins so be patient.
 az network firewall ip-config create -g $RG -f $FWNAME -n $FWIPCONFIG_NAME --public-ip-address $FWPUBLICIP_NAME --vnet-name $VNET_NAME
 # Capture Azure Firewall IP Address for Later Use
-FWPUBLIC_IP=$(az network public-ip show -g $RG -n $FWPUBLICIP_NAME --query "ipAddress")
+FWPUBLIC_IP=$(az network public-ip show -g $RG -n $FWPUBLICIP_NAME --query "ipAddress" -o tsv)
 FWPRIVATE_IP=$(az network firewall show -g $RG -n $FWNAME --query "ipConfigurations[0].privateIpAddress" -o tsv)
 # Validate Azure Firewall IP Address Values - This is more for awareness so you can help connect the networking dots
 echo $FWPUBLIC_IP
@@ -137,7 +137,6 @@ az extension add --name azure-firewall
 # Create the Outbound Network Rule from Worker Nodes to Control Plane
 az network firewall network-rule create -g $RG -f $FWNAME --collection-name 'aksfwnr' -n 'ssh' --protocols 'TCP' --source-addresses '*' --destination-addresses '*' --destination-ports 22 443 --action allow --priority 100
 # Add Application FW Rules for Egress Traffic
-# *eastus.azmk8s.io,k8s.gcr.io,storage.googleapis.com,*auth.docker.io,*cloudflare.docker.io,*registry-1.docker.io,*.azurecr.io
 az network firewall application-rule create -g $RG -f $FWNAME --collection-name 'aksfwar' -n 'AKS' --source-addresses '*' --protocols 'http=80' 'https=443' --target-fqdns 'k8s.gcr.io' 'storage.googleapis.com' '*eastus.azmk8s.io' '*auth.docker.io' '*cloudflare.docker.io' '*registry-1.docker.io' '*.ubuntu.com' '*azurecr.io' '*blob.core.windows.net' '*mcr.microsoft.com' '*cdn.mscr.io' --action allow --priority 100
 # Associate AKS Subnet to Azure Firewall
 az network vnet subnet update -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --route-table $FWROUTE_TABLE_NAME
@@ -157,8 +156,8 @@ The key permission that is being granted to the Service Princiapl below is to th
 # Create SP and Assign Permission to Virtual Network
 az ad sp create-for-rbac -n "${PREFIX}sp" --skip-assignment
 # Take the SP Creation output from above command and fill in Variables accordingly
-APPID="52ed2ee2-5511-4b89-7777-077589a0bcc9"
-PASSWORD="2755ca8a-4d6a-4d62-7777-1894cde665f7"
+APPID="<SERVICE_PRINCIPAL_APPID_GOES_HERE>"
+PASSWORD="<SERVICEPRINCIPAL_PASSWORD_GOES_HERE>"
 VNETID=$(az network vnet show -g $RG --name $VNET_NAME --query id -o tsv)
 # Assign SP Permission to VNET
 az role assignment create --assignee $APPID --scope $VNETID --role Contributor
@@ -191,7 +190,7 @@ az aks get-versions -l $LOC -o table
 # Populate the AKS Subnet ID - This is needed so we know which subnet to put AKS into
 SUBNETID=$(az network vnet subnet show -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --query id -o tsv)
 # Create AKS Cluster with Monitoring add-on using Service Principal from Above
-az aks create -g $RG -n $NAME -k 1.12.5 -l $LOC \
+az aks create -g $RG -n $NAME -k 1.12.6 -l $LOC \
   --node-count 2 --generate-ssh-keys \
   --enable-addons monitoring \
   --workspace-resource-id $WORKSPACEIDURL \
@@ -215,7 +214,7 @@ Once the AKS cluster has finished provisioning you can run the get-credentials s
 **NOTE: From here on in you will see the letter 'k' being used in all scripts, this is an alias for 'kubectl' because I am a lazy.**
 
 ```bash
-# Check Provisioning Status of AKS Cluster
+# Check Provisioning Status of AKS Cluster - ProvisioningState should say 'Succeeded'
 az aks list -o table
 # Get AKS Credentials so kubectl works
 az aks get-credentials -g $RG -n $NAME --admin
@@ -272,7 +271,7 @@ This section is pretty straight forward in that we are creating an instance of A
 # to create an Azure App Gateway with WAF enabled without a Public IP.
 # Create Public IP needed for Azure Application Gateway - This is needed due to WAF
 az network public-ip create -g $RG -n $AGPUBLICIP_NAME -l $LOC --sku "Standard"
-# Create App Gateway using WAF_v2 SKU.
+# Create App Gateway using WAF_v2 SKU - This will take several minutes so be patient.
 az network application-gateway create \
   --name $AGNAME \
   --resource-group $RG \
@@ -290,6 +289,12 @@ az network application-gateway create \
   --subnet $APPGWSUBNET_NAME \
   --vnet-name $VNET_NAME
 ```
+
+## *****Update Azure App Gateway v2 Config to be Manual*****
+
+As already mentioned, Azure App Gateway v2 is currently in preview so there are still a few kinks to be worked out. One of those is setting the configuration to 'Manual' when using it as an Ingress Controller with AKS. You will need to go into the Portal and set it to 'Manual' under 'Configuration' blade:
+
+![Azure App Gateway v2 Configuration](img/app-gateway-config.png "Azure App Gateway v2 Configuration")
 
 ## Azure Identity Creation
 
@@ -325,24 +330,27 @@ echo $ROLEMIC
 echo $IDENTITY | jq .id | tr -d '"'
 echo $IDENTITY | jq .clientId | tr -d '"'
 k apply -f aadpodidentity.yaml
-k delete -f aadpodidentity.yaml
+# Only here if you want to delete the deployment.
+#k delete -f aadpodidentity.yaml
 # Install Pod to Identity Binding on k8s cluster
-# NOTE: Update AzureIdentity in aadpodidentitybinding.yaml with name output of the $IDENTITY variable.
 echo $IDENTITY | jq .name | tr -d '"'
 k apply -f aadpodidentitybinding.yaml
-k delete -f aadpodidentitybinding.yaml
+# Only here if you want to delete the deployment.
+#k delete -f aadpodidentitybinding.yaml
 # Check out Sample Deployment Using AAD Pod Identity to ensure everything is working.
 # NOTE: Update --subscriptionid --clientid and --resourcegroup in aadpodidentity-deployment.yaml accordingly.
 echo $SUBID
-echo $RG
 echo $IDENTITY | jq .clientId | tr -d '"'
+echo $RG
 k apply -f aadpodidentity-deployment.yaml
-k delete -f aadpodidentity-deployment.yaml
-# Take note of the aadpodidentitybinding label as this determines which binding is used. 
+# Only here if you want to delete the deployment.
+#k delete -f aadpodidentity-deployment.yaml
+# Take note of the aadpodidentitybinding label as this determines which binding is used.
 k get po --show-labels -o wide
+# Check logs to make sure there are no errors.
+# Should see messages like 'succesfully made GET on instance metadata'
+k logs $(kubectl get pod -l "app=demo" -o jsonpath='{.items[0].metadata.name}') | grep 'succesfully made GET on instance metadata'
 k logs $(kubectl get pod -l "app=demo" -o jsonpath='{.items[0].metadata.name}')
-k exec $(kubectl get pod -l "app=demo" -o jsonpath='{.items[0].metadata.name}') -- /bin/bash -c env
-k delete -f aadpodidentity-deployment.yaml
 ```
 
 ## Setting up Azure Application Gateway v2 as AKS Ingress Controller
@@ -366,19 +374,24 @@ echo $ASSIGNEEID
 APPGATEWAYSCOPEID=$(az network application-gateway show -g $RG -n $AGNAME | jq .id | tr -d '"')
 # Simply here so you are aware what it looks like.
 echo $APPGATEWAYSCOPEID
+# Create Role Assignments for Azure Identity (aka Grant Permissions)
 ROLEAGWCONTRIB=$(az role assignment create --role Contributor --assignee $ASSIGNEEID --scope $APPGATEWAYSCOPEID)
 ROLEAGWREADER=$(az role assignment create --role Reader --assignee $ASSIGNEEID --scope "/subscriptions/${SUBID}/resourcegroups/${RG}")
+# Appears to be a bug in the preview Ingress Controller whereby there is an explicit check for this permission which is why it is needed in addition to granting at Resource Group level.
+ROLEAGWREADER2=$(az role assignment create --role Reader --assignee $ASSIGNEEID --scope $APPGATEWAYSCOPEID)
 # Simply here so you are aware what it looks like.
 echo $ROLEAGWCONTRIB
 echo $ROLEAGWREADER
+echo $ROLEAGWREADER2
 # NOTE: Update subscriptionId, resourceGroup, name, identityResourceID, identityClientID and apiServerAddress in agw-helm-config.yaml file with the following.
 echo $SUBID
 echo $RG
 echo $(az network application-gateway show -g $RG -n $AGNAME | jq .name | tr -d '"')
 echo $IDENTITY | jq .id | tr -d '"'
 echo $IDENTITY | jq .clientId | tr -d '"'
-k cluster-info
-# Using all the inputs from above, be sure to update the agw-helm-config.yaml before executing Helm command 
+k cluster-info | grep 'Kubernetes master'
+# eg. wr20190212-wr-rg-12345b-c9871ce7.hcp.eastus.azmk8s.io
+# Using all the inputs from above, be sure to update the agw-helm-config.yaml before executing Helm command
 helm install --name wragw -f agw-helm-config.yaml application-gateway-kubernetes-ingress/ingress-azure
 # Check Created Resources
 k get po,svc,ingress,deploy,secrets
@@ -414,7 +427,8 @@ k apply -f winterready-ingress-web.yaml
 k create secret generic fruit-secret --from-literal=azurestorageaccountname=<STORAGE_ACCOUNT_NAME_GOES_HERE> --from-literal=azurestorageaccountkey=<STORAGE_ACCOUNT_KEY_GOES_HERE>
 # Add Worker Back-End
 # NOTE: Not needed if we use Storage Service Endpoints.
-az network firewall network-rule create -g $RG -f $FWNAME --collection-name 'aksfwnr' -n 'fileshare' --protocols 'TCP' --source-addresses '*' --destination-addresses '*' --destination-ports 444 --action allow --priority 200
+az network firewall network-rule create -g $RG -f $FWNAME --collection-name 'aksfwnr2' -n 'fileshare' --protocols 'TCP' --source-addresses '*' --destination-addresses '*' --destination-ports 445 --action allow --priority 200
+# Add Worker Back-End
 k apply -f winterready-worker.yaml
 k get po,svc,ingress,deploy,secrets
 # Only here if you want to delete the deployments
@@ -427,7 +441,7 @@ The moment we have been waiting for, seeing the workload in action with all of t
 
 ```bash
 # Get Public IP of Azure Application Gateway
-az network public-ip show -g $RG -n $AGPUBLICIP_NAME --query "ipAddress")
+az network public-ip show -g $RG -n $AGPUBLICIP_NAME --query "ipAddress" -o tsv
 # Now put that Public IP address in your browser and see the applcation in action.
 ```
 
@@ -438,15 +452,15 @@ This last section takes us through how to setup Service Segmentation inside of t
 **NOTE: The 10.42.2.232 IP Address below is the IP Address of the Internal Load Balancer (ILB) created above when Ingress was being setup. If you changed it, update the IP Address accordingly.**
 
 ```bash
-# Network Policy Setup
+# Network Policy Setup - This should return nothing to start.
 k get networkpolicy
 # Network Policy Testing
-# This should work
+# This should work and return back html.
 k exec -it centos -- curl 10.42.2.232
 k apply -f np-denyall.yaml
-# Now this should fail as we laid down a blanket deny all ingress and egress traffic in the AKS Cluster
+# Now this should fail (timeout) as we laid down a blanket deny all ingress and egress traffic in the AKS Cluster
 k exec -it centos -- curl 10.42.2.232
-# Check Browser - Should be Zero Workers as traffic has been cut-off
+# Open up a new browser tab so that a new Web Socket (using SignalR) connection is established as existing web socket connections are already established and will continue to work.
 # Apply network policy rules to allow incoming traffic from Ingress Controller as well as incoming traffic from the worker.
 k apply -f np-web-allow-ingress.yaml
 k apply -f np-web-allow-worker.yaml
@@ -454,6 +468,7 @@ k apply -f np-web-allow-worker.yaml
 k get networkpolicy
 # This command should still fail as this IP Address is not in the allowed ingress network policy rules
 k exec -it centos -- curl 10.42.2.232
+# Check Public IP Address and Web Application should be working again.
 # Only here if you want to delete the deployments
 #k delete -f np-denyall.yaml
 #k delete -f np-web-allow-worker.yaml

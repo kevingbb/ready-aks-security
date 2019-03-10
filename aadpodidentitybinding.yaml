@@ -3,5 +3,5 @@ kind: AzureIdentityBinding
 metadata:
  name: wr-identity-binding
 spec:
- AzureIdentity: wr
+ AzureIdentity: wridentity
  Selector: wraadbindingselector
