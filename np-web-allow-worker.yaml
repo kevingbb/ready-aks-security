@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-function-allow-worker
+spec:
+  podSelector:
+    matchLabels:
+      app: imageclassifierweb
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: imageclassifierworker
+  policyTypes:
+  - Ingress

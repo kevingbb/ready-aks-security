@@ -1,0 +1,14 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-function-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: imageclassifierweb
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 10.42.5.0/24
+  policyTypes:
+  - Ingress

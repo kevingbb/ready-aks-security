@@ -1,0 +1,8 @@
+apiVersion: aadpodidentity.k8s.io/v1
+kind: AzureIdentity
+metadata:
+ name: wr
+spec:
+ type: 0
+ ResourceID: "<AZUREIDENTITY_ID_GOES_HERE>"
+ ClientID: "<CLIENTID_GOES_HERE>"
