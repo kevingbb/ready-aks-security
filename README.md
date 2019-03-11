@@ -137,7 +137,7 @@ az extension add --name azure-firewall
 # Create the Outbound Network Rule from Worker Nodes to Control Plane
 az network firewall network-rule create -g $RG -f $FWNAME --collection-name 'aksfwnr' -n 'ssh' --protocols 'TCP' --source-addresses '*' --destination-addresses '*' --destination-ports 22 443 --action allow --priority 100
 # Add Application FW Rules for Egress Traffic
-az network firewall application-rule create -g $RG -f $FWNAME --collection-name 'aksfwar' -n 'AKS' --source-addresses '*' --protocols 'http=80' 'https=443' --target-fqdns 'k8s.gcr.io' 'storage.googleapis.com' '*eastus.azmk8s.io' '*auth.docker.io' '*cloudflare.docker.io' '*registry-1.docker.io' '*.ubuntu.com' '*azurecr.io' '*blob.core.windows.net' '*mcr.microsoft.com' '*cdn.mscr.io' --action allow --priority 100
+az network firewall application-rule create -g $RG -f $FWNAME --collection-name 'aksfwar' -n 'AKS' --source-addresses '*' --protocols 'http=80' 'https=443' --target-fqdns 'k8s.gcr.io' 'storage.googleapis.com' '*eastus.azmk8s.io' '*auth.docker.io' '*cloudflare.docker.io' '*cloudflare.docker.com' '*registry-1.docker.io' '*.ubuntu.com' '*azurecr.io' '*blob.core.windows.net' '*mcr.microsoft.com' '*cdn.mscr.io' --action allow --priority 100
 # Associate AKS Subnet to Azure Firewall
 az network vnet subnet update -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --route-table $FWROUTE_TABLE_NAME
 # OR if you know the Subnet ID and would prefer to do it that way.
@@ -314,8 +314,10 @@ k create -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/depl
 IDENTITY=$(az identity create -g "MC_${RG}_${NAME}_${LOC}" -n $IDENTITY_NAME)
 # Simply here so you are aware what it looks like.
 echo $IDENTITY
-# Assign Reader Role to Azure Identity on Resource Group
-ROLEREADER=$(az role assignment create --role Reader --assignee $APPID --scope "/subscriptions/${SUBID}/resourcegroups/${RG}")
+# Assign Azure Identity to Reader Role on MC_ Resource Group (this is where the VMs are located)
+ASSIGNEE_IDENTITY=$(echo $IDENTITY | jq .clientId | tr -d '"')
+echo $ASSIGNEE_IDENTITY
+ROLEREADER=$(az role assignment create --role Reader --assignee $ASSIGNEE_IDENTITY --scope "/subscriptions/${SUBID}/resourcegroups/MC_${RG}_${NAME}_${LOC}")
 # Simply here so you are aware what it looks like.
 echo $ROLEREADER
 # Assign Managed Identity Operator to AKS Service Principal on Azure Identity. I know, try and wrap your head around that one. Simply, we are granting the AKS Service Principal the permissions to interact with the Managed Identity Controller (MIC) deployed from above in the context of the created Azure Identity. Meaning, only that Azure Identity and nothing else.
@@ -341,7 +343,7 @@ k apply -f aadpodidentitybinding.yaml
 # NOTE: Update --subscriptionid --clientid and --resourcegroup in aadpodidentity-deployment.yaml accordingly.
 echo $SUBID
 echo $IDENTITY | jq .clientId | tr -d '"'
-echo $RG
+echo "MC_${RG}_${NAME}_${LOC}"
 k apply -f aadpodidentity-deployment.yaml
 # Only here if you want to delete the deployment.
 #k delete -f aadpodidentity-deployment.yaml
