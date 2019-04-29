@@ -14,32 +14,81 @@ However, the second diagram usually makes folks more comfortable as it has the s
 
 ![AKS After](img/aks-after.png "AKS After")
 
+## Network Policy Not Allowed 
+This is a preview feature so you need to make sure you enable the networkPolicy feature in the Subscription being used. Here is a link with a few more details: [guidelines](https://docs.microsoft.com/en-us/azure/aks/use-network-policies)
+
 ## Variable Setup
 
 The variables are pretty straight forward, but please note there are a few words of caution on some of them.
 
 ```bash
+cp ~/.bashrc ~/.bashrc.bak
+#Restore: 
+#cp -i ~/.bashrc.bak ~/.bashrc
+#To reload 
+#source .bashrc
+
+echo "################ AKS READY Security LAB ################" >> ~/.bashrc
 PREFIX="wr"
+echo export PREFIX=$PREFIX >> ~/.bashrc
+
 RG="${PREFIX}-rg"
+echo export RG=$RG >> ~/.bashrc
+
 LOC="eastus"
+echo export LOC=$LOC >> ~/.bashrc
+
 NAME="${PREFIX}20190212"
+echo export NAME=$NAME >> ~/.bashrc
+
 ACR_NAME="${NAME}acr"
+echo export ACR_NAME=$ACR_NAME >> ~/.bashrc
+
 VNET_NAME="${PREFIX}vnet"
+echo export VNET_NAME="${PREFIX}vnet" >> ~/.bashrc
+
 AKSSUBNET_NAME="${PREFIX}akssubnet"
+echo export AKSSUBNET_NAME=$AKSSUBNET_NAME >> ~/.bashrc 
+
 SVCSUBNET_NAME="${PREFIX}svcsubnet"
+echo export SVCSUBNET_NAME=$SVCSUBNET_NAME >> ~/.bashrc
+
 ACISUBNET_NAME="${PREFIX}acisubnet"
+echo export ACISUBNET_NAME=$ACISUBNET_NAME >> ~/.bashrc
+
 # DO NOT CHANGE FWSUBNET_NAME - This is currently a requirement for Azure Firewall.
 FWSUBNET_NAME="AzureFirewallSubnet"
+echo export FWSUBNET_NAME=$FWSUBNET_NAME >> ~/.bashrc
+
 APPGWSUBNET_NAME="${PREFIX}appgwsubnet"
+echo export APPGWSUBNET_NAME=$APPGWSUBNET_NAME >> ~/.bashrc
+
 WORKSPACENAME="${PREFIX}k8slogs"
+echo export WORKSPACENAME=$WORKSPACENAME >> ~/.bashrc
+
 IDENTITY_NAME="${PREFIX}identity"
+echo export IDENTITY_NAME=$IDENTITY_NAME >> ~/.bashrc
+
 FWNAME="${PREFIX}fw"
+echo export FWNAME=$FWNAME >> ~/.bashrc
+
 FWPUBLICIP_NAME="${PREFIX}fwpublicip"
+echo export FWPUBLICIP_NAME=$FWPUBLICIP_NAME >> ~/.bashrc
+
 FWIPCONFIG_NAME="${PREFIX}fwconfig"
+echo export FWIPCONFIG_NAME=$FWIPCONFIG_NAME >> ~/.bashrc
+
 FWROUTE_TABLE_NAME="${PREFIX}fwrt"
+echo export FWROUTE_TABLE_NAME=$FWROUTE_TABLE_NAME >> ~/.bashrc
+
 FWROUTE_NAME="${PREFIX}fwrn"
+echo export FWROUTE_NAME=$FWROUTE_NAME >> ~/.bashrc
+
 AGNAME="${PREFIX}ag"
+echo export AGNAME=$AGNAME >> ~/.bashrc
+
 AGPUBLICIP_NAME="${PREFIX}agpublicip"
+echo export AGPUBLICIP_NAME=$AGPUBLICIP_NAME >> ~/.bashrc
 ```
 
 ## Create Resource Group
@@ -51,8 +100,11 @@ This section leverages the variables from above and creates the initial Resoruce
 ```bash
 # Get ARM Access Token and Subscription ID - This will be used for AuthN later.
 ACCESS_TOKEN=$(az account get-access-token -o tsv --query 'accessToken')
+echo export ACCESS_TOKEN=$ACCESS_TOKEN >> ~/.bashrc
+
 # NOTE: Update Subscription Name
 SUBID=$(az account show -s '<SUBSCRIPTION_NAME_GOES_HERE>' -o tsv --query 'id')
+echo export SUBID=$SUBID >> ~/.bashrc
 # Create Resource Group
 az group create --name $RG --location $LOC
 ```
@@ -120,7 +172,10 @@ az network firewall create -g $RG -n $FWNAME -l $LOC
 az network firewall ip-config create -g $RG -f $FWNAME -n $FWIPCONFIG_NAME --public-ip-address $FWPUBLICIP_NAME --vnet-name $VNET_NAME
 # Capture Azure Firewall IP Address for Later Use
 FWPUBLIC_IP=$(az network public-ip show -g $RG -n $FWPUBLICIP_NAME --query "ipAddress" -o tsv)
+echo export FWPUBLIC_IP=$FWPUBLIC_IP >> ~/.bashrc
 FWPRIVATE_IP=$(az network firewall show -g $RG -n $FWNAME --query "ipConfigurations[0].privateIpAddress" -o tsv)
+echo export FWPRIVATE_IP=$FWPRIVATE_IP >> ~/.bashrc
+
 # Validate Azure Firewall IP Address Values - This is more for awareness so you can help connect the networking dots
 echo $FWPUBLIC_IP
 echo $FWPRIVATE_IP
@@ -157,8 +212,11 @@ The key permission that is being granted to the Service Princiapl below is to th
 az ad sp create-for-rbac -n "${PREFIX}sp" --skip-assignment
 # Take the SP Creation output from above command and fill in Variables accordingly
 APPID="<SERVICE_PRINCIPAL_APPID_GOES_HERE>"
+echo export APPID=$APPID >> ~/.bashrc
 PASSWORD="<SERVICEPRINCIPAL_PASSWORD_GOES_HERE>"
+echo export PASSWORD=$PASSWORD >> ~/.bashrc
 VNETID=$(az network vnet show -g $RG --name $VNET_NAME --query id -o tsv)
+echo export VNETID=$VNETID >> ~/.bashrc
 # Assign SP Permission to VNET
 az role assignment create --assignee $APPID --scope $VNETID --role Contributor
 ```
@@ -178,6 +236,7 @@ az group deployment create -n $WORKSPACENAME -g $RG \
   --parameters sku="Standalone"
 # Set Workspace ID
 WORKSPACEIDURL=$(az group deployment list -g $RG -o tsv --query '[].properties.outputResources[0].id')
+echo export WORKSPACEIDURL=$WORKSPACEIDURL >> ~/.bashrc
 ```
 
 ## AKS Cluster Creation
@@ -189,6 +248,8 @@ Yay! We are at the point where all of the pre-requisite decisions have been made
 az aks get-versions -l $LOC -o table
 # Populate the AKS Subnet ID - This is needed so we know which subnet to put AKS into
 SUBNETID=$(az network vnet subnet show -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --query id -o tsv)
+echo export SUBNETID=$SUBNETID >> ~/.bashrc
+
 # Create AKS Cluster with Monitoring add-on using Service Principal from Above
 az aks create -g $RG -n $NAME -k 1.12.6 -l $LOC \
   --node-count 2 --generate-ssh-keys \
@@ -220,6 +281,7 @@ az aks list -o table
 az aks get-credentials -g $RG -n $NAME --admin
 # Setup alias to kubectl becuase I am lazy
 alias k="kubectl"
+echo "alias k='kubectl'" >>  ~/.bashrc
 # Get Nodes
 k get nodes -o wide
 ```
@@ -311,20 +373,26 @@ k create -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/depl
 #k delete -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/deploy/infra/deployment-rbac.yaml
 # Create User Identity
 # **** Make sure it is in the same RG as the VMs. ****
-IDENTITY=$(az identity create -g "MC_${RG}_${NAME}_${LOC}" -n $IDENTITY_NAME)
+IDENTITY=$(az identity create -g "MC_${RG}_${NAME}_${LOC}" -n $IDENTITY_NAME -o json)
+echo export IDENTITY=$IDENTITY >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $IDENTITY
 # Assign Azure Identity to Reader Role on MC_ Resource Group (this is where the VMs are located)
 ASSIGNEE_IDENTITY=$(echo $IDENTITY | jq .clientId | tr -d '"')
+echo export ASSIGNEE_IDENTITY=$ASSIGNEE_IDENTITY >> ~/.bashrc
 echo $ASSIGNEE_IDENTITY
+
 ROLEREADER=$(az role assignment create --role Reader --assignee $ASSIGNEE_IDENTITY --scope "/subscriptions/${SUBID}/resourcegroups/MC_${RG}_${NAME}_${LOC}")
+echo export ROLEREADER=$ROLEREADER >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $ROLEREADER
 # Assign Managed Identity Operator to AKS Service Principal on Azure Identity. I know, try and wrap your head around that one. Simply, we are granting the AKS Service Principal the permissions to interact with the Managed Identity Controller (MIC) deployed from above in the context of the created Azure Identity. Meaning, only that Azure Identity and nothing else.
 SCOPEID=$(echo $IDENTITY | jq .id | tr -d '"')
+echo export SCOPEID=-$SCOPEID >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $SCOPEID
 ROLEMIC=$(az role assignment create --role "Managed Identity Operator" --assignee $APPID --scope $SCOPEID)
+echo export ROLEMIC=$ROLEMIC >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $ROLEMIC
 # Install User Azure AD Identity
@@ -370,17 +438,22 @@ helm repo update
 # Install and Setup Ingress
 # Grant Azure Identity Access to App Gateway
 ASSIGNEEID=$(echo $IDENTITY | jq .clientId | tr -d '"')
+echo export ASSIGNEEID=$ASSIGNEEID >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $ASSIGNEEID
 # This grabs the ID of our Azure Application Gateway v2 instance so we can use it as part of our scope declarations when assigning permissions between identities and roles.
 APPGATEWAYSCOPEID=$(az network application-gateway show -g $RG -n $AGNAME | jq .id | tr -d '"')
+echo export APPGATEWAYSCOPEID=$APPGATEWAYSCOPEID >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $APPGATEWAYSCOPEID
 # Create Role Assignments for Azure Identity (aka Grant Permissions)
 ROLEAGWCONTRIB=$(az role assignment create --role Contributor --assignee $ASSIGNEEID --scope $APPGATEWAYSCOPEID)
+echo export ROLEAGWCONTRIB=$ROLEAGWCONTRIB >> ~/.bashrc
 ROLEAGWREADER=$(az role assignment create --role Reader --assignee $ASSIGNEEID --scope "/subscriptions/${SUBID}/resourcegroups/${RG}")
+echo export ROLEAGWREADER=$ROLEAGWREADER >> ~/.bashrc 
 # Appears to be a bug in the preview Ingress Controller whereby there is an explicit check for this permission which is why it is needed in addition to granting at Resource Group level.
 ROLEAGWREADER2=$(az role assignment create --role Reader --assignee $ASSIGNEEID --scope $APPGATEWAYSCOPEID)
+echo express ROLEAGWREADER2=$ROLEAGWREADER2 >> ~/.bashrc
 # Simply here so you are aware what it looks like.
 echo $ROLEAGWCONTRIB
 echo $ROLEAGWREADER
@@ -426,9 +499,11 @@ k apply -f winterready-ingress-web.yaml
 #k delete -f winterready-ingress-web.yaml
 # NOTE: Be sure you uploaded the images in the fruit directory into an Azure Storage Account that is setup with Azure Files and all those images are in a directory called 'fruit'.
 # Update <STORAGE_ACCOUNT_NAME_GOES_HERE> and <STORAGE_ACCOUNT_KEY_GOES_HERE> below with the correct credentials from the Azure Storage account created above.
-k create secret generic fruit-secret --from-literal=azurestorageaccountname=<STORAGE_ACCOUNT_NAME_GOES_HERE> --from-literal=azurestorageaccountkey=<STORAGE_ACCOUNT_KEY_GOES_HERE>
+k create secret generic fruit-secret --from-literal=azurestorageaccountname=wrsa --from-literal=azurestorageaccountkey=VFj3cc28Curx3Waa/Jz1HJH8zKQ9CcxZfTjklPLsfqdzhgqwCjxKPMxqpFgregEiVyepEMJJIJR37eYwqTz+kg==
 # Add Worker Back-End
 # NOTE: Not needed if we use Storage Service Endpoints.
+# Add the Azure Firewall extension to Azure CLI in case you do not already have it.
+# az extension add --name azure-firewall
 az network firewall network-rule create -g $RG -f $FWNAME --collection-name 'aksfwnr2' -n 'fileshare' --protocols 'TCP' --source-addresses '*' --destination-addresses '*' --destination-ports 445 --action allow --priority 200
 # Add Worker Back-End
 k apply -f winterready-worker.yaml
