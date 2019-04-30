@@ -311,7 +311,7 @@ k create -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/depl
 #k delete -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/deploy/infra/deployment-rbac.yaml
 # Create User Identity
 # **** Make sure it is in the same RG as the VMs. ****
-IDENTITY=$(az identity create -g "MC_${RG}_${NAME}_${LOC}" -n $IDENTITY_NAME)
+IDENTITY=$(az identity create -g "MC_${RG}_${NAME}_${LOC}" -n $IDENTITY_NAME -o json)
 # Simply here so you are aware what it looks like.
 echo $IDENTITY
 # Assign Azure Identity to Reader Role on MC_ Resource Group (this is where the VMs are located)
