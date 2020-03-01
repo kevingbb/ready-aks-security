@@ -324,3 +324,25 @@ function Test-SecureAksEgressTraffic {
     kubectl exec -it centos -- curl google.com
 
 }
+
+function Get-SecureAksCliTerminal {
+    [CmdletBinding()]
+    param (
+        
+    )
+    
+    kubectl apply -f $CentosDeploymentYaml 
+    kubectl get po -o wide
+    kubectl exec -it centos -- /bin/bash
+
+}
+
+
+function Open-SecureAksDashboard {
+    [CmdletBinding()]
+    param (
+        
+    )
+    
+    az aks browse -g $ResourceGroup -n $Name
+}
