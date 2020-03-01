@@ -11,15 +11,20 @@ function New-SecureAksToolsInit {
 }
 
 
-function New-SecureAksDeployment {
+function New-SecureAksFullDeployment {
     [CmdletBinding()]
     param()
 
     $VerbosePreference = Continue
     Start-Transcript -Path DeploymentLogs.txt
 
-
-
+    New-SecureAksEnvironmentVariables
+    New-SecureAksValidations
+    New-SecureAksResourceGroup 
+    New-SecureAksVNets
+    New-SecureAksFirewallDeployment 
+    New-SecureAksCluster
+    
     Stop-Transcript
 }
 
@@ -52,7 +57,24 @@ function New-SecureAksEnvironmentVariables {
 
     $SubscriptionNAme = "crgar Internal Subscription"
 
+
+    $LogAnalyticsJsonPath = "azuredeploy-loganalytics.json"
+
+
 }
+
+function New-SecureAksValidations {
+    [CmdletBinding()]
+    param (
+        
+    )
+
+    if (!Test-Path $LogAnalyticsJsonPath) {
+        Write-Error "Log Analytics deployment json not found in '$LogAnalyticsJsonPath'. Are you running this from the right path?"
+    }
+
+}
+
 
 function New-SecureAksResourceGroup {
     [CmdletBinding()]
@@ -102,7 +124,7 @@ function New-SecureAksVNets {
         --address-prefix 10.42.5.0/24
 }
 
-function New-SecureAksDeployment {
+function New-SecureAksFirewallDeployment {
     [CmdletBinding()]
     param (
             
@@ -158,12 +180,25 @@ function New-SecureAksCluster {
         
     )
     
-    # Create SP and Assign Permission to Virtual Network
-    az ad sp create-for-rbac -n "${PREFIX}sp" --skip-assignment
-    # Take the SP Creation output from above command and fill in Variables accordingly
-    APPID="<SERVICE_PRINCIPAL_APPID_GOES_HERE>"
-    PASSWORD="<SERVICEPRINCIPAL_PASSWORD_GOES_HERE>"
-    VNETID=$(az network vnet show -g $RG --name $VNET_NAME --query id -o tsv)
-    # Assign SP Permission to VNET
-    az role assignment create --assignee $APPID --scope $VNETID --role Contributor
+    Write-Verbose "Create SP and Assign Permission to Virtual Network"
+    $ServicePrincipalJson = az ad sp create-for-rbac -n "${Prefix}sp" --skip-assignment
+    $ServicePrincipal = $ServicePrincipalJson | ConvertFrom-Json
+    Write-Verbose $ServicePrincipalJson
+
+    Write-Verbose "Getting the VNet ID"
+    $VnetId = $(az network vnet show -g $ResourceGroup --name $VnetName --query id -o tsv)
+    
+    Write-Verbose "Assign SP Permission to VNET"
+    az role assignment create --assignee $ServicePrincipal.appId --scope $VnetId --role Contributor
+
+    # Create Log Analytics Workspace
+    az group deployment create -n $WorkSpaceName -g $ResourceGroup `
+        --template-file azuredeploy-loganalytics.json `
+        --parameters workspaceName=$WorkSpaceName `
+        --parameters location=$Location `
+        --parameters sku="Standalone"
+
+    # Set Workspace ID
+    WORKSPACEIDURL=$(az group deployment list -g $RG -o tsv --query '[].properties.outputResources[0].id')
+
 }
