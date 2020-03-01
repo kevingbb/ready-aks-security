@@ -23,8 +23,11 @@ function New-SecureAksFullDeployment {
     New-SecureAksResourceGroup 
     New-SecureAksVNets
     New-SecureAksFirewallDeployment 
-    New-SecureAksCluster
-    
+    New-SecureAksLogAnalyticsDeployment
+    New-SecureAksClusterDeployment
+    Get-SecureAksClusterCredentials
+    Test-SecureAksEgressTraffic
+
     Stop-Transcript
 }
 
@@ -54,12 +57,12 @@ function New-SecureAksEnvironmentVariables {
     $FwRouteName = "${Prefix}fwrn"
     $AgNAme = "${Prefix}ag"
     $AgPublicIpName = "${Prefix}agpublicip"
-
+    $AksVersion = "1.15.7"
     $SubscriptionNAme = "crgar Internal Subscription"
 
 
-    $LogAnalyticsJsonPath = "azuredeploy-loganalytics.json"
-
+    $LogAnalyticsJsonFilePath = "azuredeploy-loganalytics.json"
+    $CentosDeploymentYaml = "./powershellDeployment/centos-deployment.yaml"
 
 }
 
@@ -69,9 +72,19 @@ function New-SecureAksValidations {
         
     )
 
-    if (!Test-Path $LogAnalyticsJsonPath) {
-        Write-Error "Log Analytics deployment json not found in '$LogAnalyticsJsonPath'. Are you running this from the right path?"
+    if (!Test-Path $LogAnalyticsJsonFilePath) {
+        Write-Error "Log Analytics deployment json not found in '$LogAnalyticsJsonFilePath'. Are you running this from the right path?"
     }
+
+    Write-Verbose "Looking if version '$AksVersion' is supported in '$Location'. Available AKS versions:"
+    az aks get-versions -l $Location -o table
+
+    $AksOrchestratorVersions = (az aks get-versions -l $Location -o json | ConvertFrom-Json).orchestrators.orchestratorVersion
+    if (!($AksOrchestratorVersions -contains $AksVersion))
+    {
+        Write-Error "Version '$AksVersion' not supported in '$Location'"
+    }
+    
 
 }
 
@@ -174,7 +187,7 @@ function New-SecureAksFirewallDeployment {
     #az network vnet subnet update -g $RG --route-table $FWROUTE_TABLE_NAME --ids $SUBNETID
 }
 
-function New-SecureAksCluster {
+function New-SecureAksLogAnalyticsDeployment {
     [CmdletBinding()]
     param (
         
@@ -188,17 +201,126 @@ function New-SecureAksCluster {
     Write-Verbose "Getting the VNet ID"
     $VnetId = $(az network vnet show -g $ResourceGroup --name $VnetName --query id -o tsv)
     
-    Write-Verbose "Assign SP Permission to VNET"
+    Write-Verbose "Assigning SP Permission to VNET"
     az role assignment create --assignee $ServicePrincipal.appId --scope $VnetId --role Contributor
 
-    # Create Log Analytics Workspace
+    Write-Verbose "Creating Log Analytics Workspace"
     az group deployment create -n $WorkSpaceName -g $ResourceGroup `
-        --template-file azuredeploy-loganalytics.json `
+        --template-file $LogAnalyticsJsonFilePath `
         --parameters workspaceName=$WorkSpaceName `
         --parameters location=$Location `
         --parameters sku="Standalone"
 
-    # Set Workspace ID
-    WORKSPACEIDURL=$(az group deployment list -g $RG -o tsv --query '[].properties.outputResources[0].id')
+        Write-Verbose "Seting Workspace ID"
+    $WorkSpaceIdUrl = $(az group deployment list -g $ResourceGroup -o tsv --query '[].properties.outputResources[0].id')
+
+}
+
+
+function New-SecureAksClusterDeployment {
+    [CmdletBinding()]
+    param (
+        
+    )
+
+    Write-Verbose "Available versions:"
+    az aks get-versions -l $Location -o table
+
+    Write-Verbose "Populate the AKS Subnet ID - This is needed so we know which subnet to put AKS into"
+    $SubnetId = $(az network vnet subnet show -g $ResourceGroup --vnet-name $VnetName --name $AKSSubnetName --query id -o tsv)
+
+    Write-Verbose "Creating AKS Cluster with Monitoring add-on using Service Principal '$($ServicePrincipal.name)'"
+    az aks create -g $ResourceGroup `
+        -n $Name `
+        -k $AksVersion `
+        -l $Location `
+        --node-count 2 `
+        --generate-ssh-keys `
+        --enable-addons monitoring `
+        --workspace-resource-id $WorkSpaceIdUrl `
+        --network-plugin azure `
+        --network-policy azure `
+        --service-cidr 10.41.0.0/16 `
+        --dns-service-ip 10.41.0.10 `
+        --docker-bridge-address 172.17.0.1/16 `
+        --vnet-subnet-id $SubnetId `
+        --service-principal $ServicePrincipal.appId `
+        --client-secret $ServicePrincipal.password `
+        --no-wait
+
+    # Check Provisioning Status of AKS Cluster - ProvisioningState should say 'Succeeded'
+    $ClusterReady = $false
+    while(!$ClusterReady) {
+
+        Start-Sleep -Seconds 1
+        Write-Verbose "Waiting for cluster '$Name' to be created"
+        $clusters = az aks list -o json | ConvertFrom-Json
+        $cluster = $clusters | Where-Object -Property name -EQ $Name
+        $ClusterReady = $cluster.provisioningState -ne "$Creating"
+        
+        Write-Verbose "Cluster '$Name' is in provisioningState '$($cluster.provisioningState)'"
+    }
+
+    if ($cluster.provisioningState -ne "Succeeded")
+    {
+        Write-Error "Cluster provisioningState is '$($cluster.provisioningState)'. Expected 'Succeeded'"
+    }
+
+}
+
+function Get-SecureAksClusterCredentials {
+    [CmdletBinding()]
+    param (
+    
+    )
+
+    Write-Verbose "Geting AKS Credentials so kubectl works"
+    az aks get-credentials -g $ResourceGroup -n $Name --admin
+
+    Write-Verbose "Geting Nodes"
+    kubectl get nodes -o wide
+}
+
+function New-SecureAksApplicationGateway {
+    [CmdletBinding()]
+    param (
+        
+    )
+    
+    # Create Azure App Gateway v2 with WAF and autoscale set to manual.
+    # NOTE: Azure App Gateway v2 is currently in Preview. Also note that it is not possible at this time
+    # to create an Azure App Gateway with WAF enabled without a Public IP.
+    Write-Verbose "Creating Public IP needed for Azure Application Gateway - This is needed due to WAF"
+    az network public-ip create -g $ResourceGroup -n $AgPublicIpName -l $Location --sku "Standard"
+
+    # Create App Gateway using WAF_v2 SKU - This will take several minutes so be patient.
+    az network application-gateway create `
+        --name $AgNAme `
+        --resource-group $ResourceGroup `
+        --location $Location `
+        --min-capacity 2 `
+        --capacity 2 `
+        --frontend-port 80 `
+        --http-settings-cookie-based-affinity Disabled `
+        --http-settings-port 80 `
+        --http-settings-protocol Http `
+        --routing-rule-type Basic `
+        --sku WAF_v2 `
+        --private-ip-address 10.42.5.12 `
+        --public-ip-address $AgPublicIpName `
+        --subnet $AppGwSubnetName `
+        --vnet-name $VnetName
+}
+
+function Test-SecureAksEgressTraffic {
+    [CmdletBinding()]
+    param (
+        
+    )
+    
+    kubectl apply -f $CentosDeploymentYaml 
+    kubectl get po -o wide
+    kubectl exec -it centos -- curl www.ubuntu.com
+    kubectl exec -it centos -- curl google.com
 
 }
