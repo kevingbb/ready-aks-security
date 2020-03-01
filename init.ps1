@@ -239,6 +239,18 @@ function New-SecureAksFirewallDeployment {
     #az network vnet subnet show -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --query id -o tsv
     #SUBNETID=$(az network vnet subnet show -g $RG --vnet-name $VNET_NAME --name $AKSSUBNET_NAME --query id -o tsv)
     #az network vnet subnet update -g $RG --route-table $FWROUTE_TABLE_NAME --ids $SUBNETID
+
+    Write-Verbose "Enabling monitoring to Azure Firewall"
+    # We need to escape quotes like this when running this command from Powershell
+    # http://mitzen.blogspot.com/2019/07/powershell-passing-json-string-into-az.html
+    $logs = '[{\"category\": \"AzureFirewallApplicationRule\",\"enabled\": true},{\"category\": \"AzureFirewallNetworkRule\",\"enabled\": true}]'
+    $metrics = '[{\"category\": \"AllMetrics\",\"enabled\": true}]'
+    az monitor diagnostic-settings create `
+        --name "$Prefix-fw-monitoring-settings" `
+        --resource "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Network/azureFirewalls/$FwName" `
+        --workspace $WorkspaceName `
+        --logs $logs `
+        --metrics $metrics
 }
 
 function New-SecureAksLogAnalyticsDeployment {
@@ -374,9 +386,30 @@ function Test-SecureAksEgressTraffic {
     
     kubectl apply -f $CentosDeploymentYaml 
     kubectl get po -o wide
-    kubectl exec -it centos -- curl www.ubuntu.com
-    kubectl exec -it centos -- curl google.com
 
+    try {
+        $url = "packages.microsoft.com"
+        Write-Verbose "Testing connection to '$url'"
+        $response = kubectl exec -it centos -- curl $url
+        if(!($response -contains "<html>"))
+        {
+            Write-Error "Cluster has no connection to required services"
+        } else {
+            Write-Verbose "'$url' could be accessed from Pod"
+        }
+
+        $url = "google.com"
+        Write-Verbose "Testing connection to '$url'"
+        $response = kubectl exec -it centos -- curl $url
+        if(!($response -contains "<html>") -and ($response -contains "Action: Deny."))
+        {
+            Write-Error "Cluster has connection to the internet!"
+        } else {
+            Write-Verbose "Internet not accessible: '$url' denied"
+        }
+    } finally {
+        kubectl delete pod centos
+    }
 }
 
 function Get-SecureAksCliTerminal {
