@@ -1,4 +1,3 @@
-
 function New-SecureAksToolsInit {
     [CmdletBinding()]
     param (
